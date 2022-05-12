@@ -1,0 +1,3 @@
+[submodule "programs/agnostic-orderbook"]
+	path = programs/agnostic-orderbook
+	url = https://github.com/Bonfida/agnostic-orderbook.git

@@ -1,0 +1,41 @@
+[package]
+name = "instruments"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "instruments"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.24.2"
+solana-program = "1.8.12"
+thiserror = "1.0"
+spl-token = {version = "3.1.1", features = ["no-entrypoint"]}
+spl-associated-token-account = {version = "1.0.3", features = ["no-entrypoint"]}
+dex = { path = "../dex", features = ["no-entrypoint", "cpi"]}
+dummy-oracle = { path = "../dummy-oracle", features = ["no-entrypoint"]}
+bytemuck = {version = "1.7.2", features = ["derive"]}
+arrayref = "0.3.6"
+borsh = "0.9"
+pyth-client = {git = "https://github.com/pyth-network/pyth-client-rs", rev = "396b7e9"}
+num-traits = "0.2.14"
+num-derive = "0.3"
+bincode = "1.3.1"
+
+[dev-dependencies]
+hexdump = "0.1.0"
+solana-sdk = "1.8.0"
+rand = "0.8.4"
+arrayref = "0.3.6"
+solana-program-test = "1.8.0"
+tokio = {version="1.6", features = ["macros"]}
+

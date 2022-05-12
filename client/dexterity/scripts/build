@@ -1,0 +1,20 @@
+#!/bin/bash
+ROOT=$(git rev-parse --show-toplevel)
+cd $ROOT 
+./build.sh
+echo "Built protocols"
+cd $ROOT/client/dexterity
+echo "solana-test-validator \\" > $ROOT/client/dexterity/start_test_validator.sh
+DEPLOY=$ROOT/target/deploy
+ls $DEPLOY
+N=$(ls $DEPLOY | grep -v json | wc -l)
+echo $N
+echo $DEPLOY
+paste \
+    <(yes --bpf-program | head -n $N) \
+    <(ls $DEPLOY | grep json | xargs -I {}  solana-keygen pubkey $DEPLOY/{}) \
+    <(ls $DEPLOY | awk -v dir="$DEPLOY" '{print dir"/"$0}'| grep -v json) \
+    <(yes "\\" | head -n $N) \
+    >>  $ROOT/client/dexterity/start_test_validator.sh
+
+chmod +x $ROOT/client/dexterity/start_test_validator.sh
