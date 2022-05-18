@@ -18,12 +18,17 @@ import dexterity.codegen.dex.types as types
 # LOCK-BEGIN[class(Product)]: DON'T MODIFY
 @pod
 class Product(Enum[AutoTagType]):
-    OUTRIGHT = Variant(field=Option[named_fields(outright=Outright)])
-    COMBO = Variant(field=Option[named_fields(combo=Combo)])
+    OUTRIGHT = Variant(field=named_fields(outright=Outright))
+    COMBO = Variant(field=named_fields(combo=Combo))
     # LOCK-END
 
     def metadata(self) -> "types.ProductMetadata":
-        return self.field.metadata
+        if getattr(self.field, "outright"):
+            return self.field.outright.metadata
+        elif getattr(self.field, "combo"):
+            return self.field.combo.metadata
+        else:
+            raise ValueError(f"Uknown product type for {self}")
 
     @classmethod
     def _to_bytes_partial(cls, buffer, obj, **kwargs):
