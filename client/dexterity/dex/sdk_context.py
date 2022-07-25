@@ -78,6 +78,7 @@ class SDKTrader:
     wallet: PublicKey
     trader_fee_state_acct: PublicKey
     trader_risk_state_acct: PublicKey  # separate pk vs kp to allow **vars(trader) in ixs
+    dex_program: PublicKey
 
     @staticmethod
     def connect(
@@ -96,7 +97,7 @@ class SDKTrader:
         assert trg.owner == keypair.public_key
 
         return SDKTrader(
-            keypair, account, wallet, trader_fee_state_acct, trader_risk_state_acct)
+            keypair, account, wallet, trader_fee_state_acct, trader_risk_state_acct, sdk.dex_program)
 
     def get_trader_risk_group(self) -> dtys.TraderRiskGroup:
         return fetch_account_details(self.account).data_obj
@@ -112,7 +113,8 @@ class SDKTrader:
             market_product_group_vault=sdk.market_product_group_vault,
             params=dtys.DepositFundsParams(
                 quantity=qty,
-            )
+            ),
+            program_id=self.dex_program,
         )
         return solana_utils.send_instructions(ix)
 
@@ -133,6 +135,7 @@ class SDKTrader:
             params=dtys.WithdrawFundsParams(
                 quantity=qty,
             ),
+            program_id=self.dex_program,
         )
         return solana_utils.send_instructions(ix)
 
@@ -201,6 +204,7 @@ class SDKTrader:
                 limit_price=dtys.Fractional.into(price, product.stale_product.metadata().base_decimals),
             ),
             remaining_accounts=remaining_accounts,
+            program_id=self.dex_program,
         )
 
         return ix
@@ -249,7 +253,7 @@ class SDKTrader:
             params=CancelOrderParams(order_id=order_id),
             system_program=SYS_PROGRAM_ID,
             remaining_accounts=None,
-            program_id=None,
+            program_id=self.dex_program,
         )
 
         return ix
@@ -453,6 +457,7 @@ class SDKContext:
             market_product_group=self.market_product_group,
             risk_signer=self.risk_signer,
             risk_engine_program=self.risk_engine_program,
+            program_id=self.dex_program,
             # **vars(self),
         )
         solana_utils.send_instructions(fee_ix, allocate_trg, trg_init_ix)
