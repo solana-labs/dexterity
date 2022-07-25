@@ -453,6 +453,7 @@ class SDKContext:
             market_product_group=self.market_product_group,
             risk_signer=self.risk_signer,
             risk_engine_program=self.risk_engine_program,
+            program_id=self.dex_program,
             # **vars(self),
         )
         solana_utils.send_instructions(fee_ix, allocate_trg, trg_init_ix)
