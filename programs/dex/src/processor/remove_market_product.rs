@@ -6,7 +6,7 @@ use bonfida_utils::InstructionsAccount;
 
 use crate::{
     error::{DexError, DomainOrProgramResult, UtilError},
-    state::products::Product,
+    state::{products::Product, callback_info::CallBackInfo},
     utils::validation::{assert, assert_keys_equal},
     DomainOrProgramError, RemoveMarketProduct,
 };
@@ -46,32 +46,49 @@ pub fn process(ctx: Context<RemoveMarketProduct>) -> DomainOrProgramResult {
     let product_bump = validate(&ctx)?;
     let accts = ctx.accounts;
 
-    let close_market_instruction = agnostic_orderbook::instruction::close_market::Accounts {
-        market: accts.orderbook.key,
-        event_queue: accts.event_queue.key,
-        bids: accts.bids.key,
-        asks: accts.asks.key,
-        authority: accts.market_signer.key,
-        lamports_target_account: accts.authority.key,
+    let close_market_accounts = agnostic_orderbook::instruction::close_market::Accounts {
+        market: &accts.orderbook,
+        event_queue: &accts.event_queue,
+        bids: &accts.bids,
+        asks: &accts.asks,
+        lamports_target_account: &accts.authority,
+    };
+
+    let close_market_param = agnostic_orderbook::instruction::close_market::Params {};
+    if let Err(error) = agnostic_orderbook::instruction::close_market::process::<CallBackInfo>(
+        ctx.program_id,
+        close_market_accounts,
+        close_market_param,
+    ) {
+        return Err(DomainOrProgramError::ProgramErr(error));
     }
-    .get_instruction(
-        accts.aaob_program.key(),
-        agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CloseMarket as u8,
-        agnostic_orderbook::instruction::close_market::Params {},
-    );
-    invoke_signed(
-        &close_market_instruction,
-        &[
-            accts.aaob_program.to_account_info(),
-            accts.orderbook.to_account_info(),
-            accts.market_signer.to_account_info(),
-            accts.event_queue.to_account_info(),
-            accts.bids.to_account_info(),
-            accts.asks.to_account_info(),
-            accts.authority.to_account_info(),
-        ],
-        &[&[accts.product.key.as_ref(), &[product_bump]]],
-    )?;
+
+    // let close_market_instruction =
+    // agnostic_orderbook::instruction::close_market::Accounts {
+    //     market: accts.orderbook.key,
+    //     event_queue: accts.event_queue.key,
+    //     bids: accts.bids.key,
+    //     asks: accts.asks.key,
+    //     authority: accts.market_signer.key,
+    //     lamports_target_account: accts.authority.key,
+    // }
+    // .get_instruction(
+    //     accts.aaob_program.key(),
+    //     agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CloseMarket as u8,
+    // );
+    // invoke_signed(
+    //     &close_market_instruction,
+    //     &[
+    //         accts.aaob_program.to_account_info(),
+    //         accts.orderbook.to_account_info(),
+    //         accts.market_signer.to_account_info(),
+    //         accts.event_queue.to_account_info(),
+    //         accts.bids.to_account_info(),
+    //         accts.asks.to_account_info(),
+    //         accts.authority.to_account_info(),
+    //     ],
+    //     &[&[accts.product.key.as_ref(), &[product_bump]]],
+    // )?;
     let mut market_product_group = accts.market_product_group.load_mut()?;
     market_product_group.deactivate_product(accts.product.key())?;
     market_product_group.sequence_number += 1;

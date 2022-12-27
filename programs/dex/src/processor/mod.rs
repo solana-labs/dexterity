@@ -14,3 +14,4 @@ pub mod transfer_full_position;
 pub mod update_product_funding;
 pub mod update_trader_funding;
 pub mod withdraw_funds;
+pub mod create_market;

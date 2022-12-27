@@ -1,9 +1,10 @@
-use std::{
-    borrow::BorrowMut,
-    cell::{Ref, RefMut},
+use agnostic_orderbook::{
+    error::AoError,
+    state::{
+        critbit::Slab, event_queue::EventQueueHeader, market_state::MarketState, AccountTag,
+        OrderSummary, Side,
+    },
 };
-
-use agnostic_orderbook::state::{market_state::MarketState, AccountTag, event_queue::EventQueueHeader, critbit::Slab, Side};
 use anchor_lang::{
     prelude::*,
     solana_program::{
@@ -114,7 +115,7 @@ pub fn process<'info>(
         match_limit,
         limit_price,
     } = params;
-    let mut market_state_data = accts.orderbook.data.borrow();
+    let mut market_state_data = accts.orderbook.data.borrow_mut();
     let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
 
     if max_base_qty < u64_to_quote(orderbook.min_base_order_size as u64)? {
@@ -142,18 +143,19 @@ pub fn process<'info>(
         open_orders_idx: trader_risk_group.open_orders.get_next_index() as u64,
     };
     assert(accts.orderbook.is_writable, DexError::CombosNotRemoved)?;
-    invoke_unchecked(
-        &system_instruction::transfer(
-            accts.user.key,
-            accts.orderbook.key,
-            orderbook.cranker_reward,
-        ),
-        &[
-            accts.user.clone(),
-            accts.orderbook.clone(),
-            accts.system_program.to_account_info(),
-        ],
-    )?;
+    //TODO: Cranker reward was removed!
+    // invoke_unchecked(
+    //     &system_instruction::transfer(
+    //         accts.user.key,
+    //         accts.orderbook.key,
+    //         orderbook.cranker_reward,
+    //     ),
+    //     &[
+    //         accts.user.clone(),
+    //         accts.orderbook.clone(),
+    //         accts.system_program.to_account_info(),
+    //     ],
+    // )?;
     let limit_price_aob =
         get_limit_price_aob(limit_price, product.price_offset, product.tick_size)?;
 
@@ -162,39 +164,59 @@ pub fn process<'info>(
             .map_err(ProgramError::from)?
             .count;
 
-    invoke_signed_unchecked(
-        &agnostic_orderbook::instruction::new_order::Accounts {
-            market: accts.orderbook.key,
-            event_queue: accts.event_queue.key,
-            bids: accts.bids.key,
-            asks: accts.asks.key,
-            authority: accts.market_signer.key,
+    let new_order_accounts = agnostic_orderbook::instruction::new_order::Accounts {
+        market: &accts.orderbook,
+        event_queue: &accts.event_queue,
+        bids: &accts.bids,
+        asks: &accts.asks,
+    };
+    let new_order_params = agnostic_orderbook::instruction::new_order::Params::<CallBackInfo> {
+        max_base_qty: max_base_qty.round(product.base_decimals as u32)?.m as u64,
+        max_quote_qty: u64::MAX,
+        limit_price: limit_price_aob,
+        side,
+        match_limit,
+        callback_info: callback_info,
+        post_only,
+        post_allowed,
+        self_trade_behavior,
+    };
+
+    let OrderSummary {
+        posted_order_id,
+        total_base_qty,
+        total_base_qty_posted,
+        total_quote_qty,
+    } = match agnostic_orderbook::instruction::new_order::process::<CallBackInfo>(
+        ctx.program_id,
+        new_order_accounts,
+        new_order_params,
+    ) {
+        Err(error) => {
+            // error.print::<AoError>();
+            //TODO: Return correct error;
+            return Err(DomainOrProgramError::ProgramErr(error));
         }
-        .get_instruction(
-            accts.aaob_program.key(),
-            agnostic_orderbook::instruction::AgnosticOrderbookInstruction::NewOrder as u8,
-            agnostic_orderbook::instruction::new_order::Params {
-                max_base_qty: max_base_qty.round(product.base_decimals as u32)?.m as u64,
-                max_quote_qty: u64::MAX,
-                limit_price: limit_price_aob,
-                side,
-                match_limit,
-                callback_info: callback_info.to_vec(),
-                post_only,
-                post_allowed,
-                self_trade_behavior,
-            },
-        ),
-        &[
-            accts.aaob_program.clone(),
-            accts.orderbook.clone(),
-            accts.market_signer.clone(),
-            accts.event_queue.clone(),
-            accts.bids.clone(),
-            accts.asks.clone(),
-        ],
-        &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
-    )?;
+        Ok(s) => s,
+    };
+
+    // invoke_signed_unchecked(
+
+    //     .get_instruction(
+    //         accts.aaob_program.key(),
+    //         agnostic_orderbook::instruction::AgnosticOrderbookInstruction::NewOrder as u8,
+
+    //     ),
+    //     &[
+    //         accts.aaob_program.clone(),
+    //         accts.orderbook.clone(),
+    //         accts.market_signer.clone(),
+    //         accts.event_queue.clone(),
+    //         accts.bids.clone(),
+    //         accts.asks.clone(),
+    //     ],
+    //     &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
+    // )?;
 
     let ending_queue_size =
         EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
@@ -210,13 +232,6 @@ pub fn process<'info>(
         new_events,
     )?;
 
-    let OrderSummary {
-        posted_order_id,
-        total_base_qty,
-        total_quote_qty,
-        total_base_qty_posted,
-    }: OrderSummary = Option::deserialize(&mut register_acc)?.unwrap();
-
     emit!(DexOrderSummary::new(
         posted_order_id,
         total_base_qty,
@@ -227,8 +242,8 @@ pub fn process<'info>(
     {
         let mut bids = accts.bids.try_borrow_mut_data()?;
         let mut asks = accts.asks.try_borrow_mut_data()?;
-        let bids = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
-        let asks = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
+        let bids: Slab<CallBackInfo> = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
+        let asks: Slab<CallBackInfo> = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
         let windows = &market_product_group.ewma_windows.clone();
         let best_bid = get_bbo(
             bids.find_max(),

@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use agnostic_orderbook::state::MarketState;
+use agnostic_orderbook::state::{market_state::MarketState, AccountTag};
 use anchor_client::{Client as AnchorClient, Cluster, Cluster::Localnet};
 use anchor_lang::Key;
 use anyhow::anyhow;
@@ -203,10 +203,10 @@ impl SDKContext {
                 key: product.product_key,
                 name: product.name,
                 orderbook: product.orderbook,
-                bids: Pubkey::new_from_array(market_state.bids),
-                asks: Pubkey::new_from_array(market_state.asks),
+                bids: market_state.bids,
+                asks: market_state.asks,
                 market_signer,
-                event_queue: Pubkey::new_from_array(market_state.event_queue),
+                event_queue: market_state.event_queue,
             });
         }
 
@@ -220,10 +220,10 @@ impl SDKContext {
                 key: product.product_key,
                 name: product.name,
                 orderbook: product.orderbook,
-                bids: Pubkey::new_from_array(market_state.bids),
-                asks: Pubkey::new_from_array(market_state.asks),
+                bids: market_state.bids,
+                asks:market_state.asks,
                 market_signer,
-                event_queue: Pubkey::new_from_array(market_state.event_queue),
+                event_queue: market_state.event_queue,
             });
         }
         self.products = products;
@@ -241,7 +241,7 @@ impl SDKContext {
 async fn load_order_book(orderbook: Pubkey, client: &SDKClient) -> SDKResult<MarketState> {
     let acct = &mut (orderbook, client.get_account(orderbook).await?);
     let info = solana_sdk::account_info::IntoAccountInfo::into_account_info(acct);
-    let mut market_state_data = accts.orderbook.data.borrow_mut();
+    let mut market_state_data = info.data.borrow_mut();
     let market_state = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
 
     Ok(*market_state)

@@ -27,6 +27,7 @@ pub fn create_orderbook_ixs(
 ) -> Vec<Instruction> {
     let size = 192_u64;
     let lamports = client.rent_exempt(size as usize).max(1);
+    //TODO: Change
     let create_market_account_ix = create_account(
         &client.payer.pubkey(),
         &market_account.pubkey(),
@@ -62,31 +63,31 @@ pub fn create_orderbook_ixs(
         &aaob_program_id,
     );
     // Create Market
-    let create_market_ix = create_market::Accounts {
-        market: &market_account.pubkey(),
-        event_queue: &event_queue_account.pubkey(),
-        bids: &bids_account.pubkey(),
-        asks: &asks_account.pubkey(),
-    }
-    .get_instruction(
-        aaob_program_id,
-        agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CreateMarket as u8,
-        create_market::Params {
-            caller_authority: caller_authority.to_bytes(),
-            callback_info_len: 40,
-            callback_id_len: 32,
-            min_base_order_size,
-            tick_size: 1,
-            cranker_reward,
-        },
-    );
-    vec![
-        create_market_account_ix,
-        create_event_queue_account_ix,
-        create_bids_account_ix,
-        create_asks_account_ix,
-        create_market_ix,
-    ]
+    // let create_market_ix = create_market::Accounts {
+    //     market: &market_account.pubkey(),
+    //     event_queue: &event_queue_account.pubkey(),
+    //     bids: &bids_account.pubkey(),
+    //     asks: &asks_account.pubkey(),
+    // }
+    // .get_instruction(
+    //     aaob_program_id,
+    //     agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CreateMarket as u8,
+    //     create_market::Params {
+    //         caller_authority: caller_authority.to_bytes(),
+    //         callback_info_len: 40,
+    //         callback_id_len: 32,
+    //         min_base_order_size,
+    //         tick_size: 1,
+    //         cranker_reward,
+    //     },
+    // );
+    // vec![
+    //     create_market_account_ix,
+    //     create_event_queue_account_ix,
+    //     create_bids_account_ix,
+    //     create_asks_account_ix,
+    //     create_market_ix,
+    // ]
 }
 
 pub async fn create_orderbook(

@@ -89,11 +89,12 @@ pub fn process<'a, 'b, 'c, 'info>(
     assert_keys_equal(product.orderbook, accts.orderbook.key())?;
     let is_expired = market_product_group.is_expired(&product);
 
-    let event_queue_header =
-        EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
-            .map_err(ProgramError::from)?;
+    // let event_queue_header =
+    //     EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
+    //         .map_err(ProgramError::from)?;
+    let mut event_queue_data = accts.event_queue.data.borrow_mut();
     let event_queue = EventQueue::<[u8; 32]>::from_buffer(
-        &mut accts.event_queue.data.borrow_mut(),
+        &mut event_queue_data,
         // Rc::clone(&accts.event_queue.data),
         // CALLBACK_INFO_LEN as usize,
         AccountTag::EventQueue,
@@ -133,31 +134,47 @@ pub fn process<'a, 'b, 'c, 'info>(
         return Err(DexError::NoOp.into());
     }
 
-    let pop_events_instruction = agnostic_orderbook::instruction::consume_events::Accounts {
-        market: accts.orderbook.key,
-        event_queue: accts.event_queue.key,
-        authority: accts.market_signer.key,
-        reward_target: accts.reward_target.key,
-    }
-    .get_instruction(
-        accts.aaob_program.key(),
-        agnostic_orderbook::instruction::AgnosticOrderbookInstruction::ConsumeEvents as u8,
-        agnostic_orderbook::instruction::consume_events::Params {
-            number_of_entries_to_consume: total_iterations,
-        },
-    );
+    let pop_event_accounts = agnostic_orderbook::instruction::consume_events::Accounts {
+        market: &accts.orderbook,
+        event_queue: &accts.event_queue,
+    };
+    let pop_event_params = agnostic_orderbook::instruction::consume_events::Params {
+        number_of_entries_to_consume: total_iterations,
+    };
 
-    invoke_signed_unchecked(
-        &pop_events_instruction,
-        &[
-            accts.aaob_program.clone(),
-            accts.orderbook.clone(),
-            accts.event_queue.clone(),
-            accts.market_signer.clone(),
-            accts.reward_target.clone(),
-        ],
-        &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
-    )?;
+    if let Err(error) = agnostic_orderbook::instruction::consume_events::process::<CallBackInfo>(
+        ctx.program_id,
+        pop_event_accounts,
+        pop_event_params,
+    ) {
+        return Err(DomainOrProgramError::ProgramErr(error));
+    }
+    //TODO: Remove
+    // let pop_events_instruction =
+    // agnostic_orderbook::instruction::consume_events::ac {
+    // //     market: accts.orderbook.key,
+    // //     event_queue: accts.event_queue.key,
+    // //     authority: accts.market_signer.key,
+    // //     reward_target: accts.reward_target.key,
+    // // }
+    // .get_instruction(
+    //     accts.aaob_program.key(),
+    //     agnostic_orderbook::instruction::AgnosticOrderbookInstruction::ConsumeEvents as u8,
+
+    // );
+
+    // invoke_signed_unchecked(
+    //     &pop_events_instruction,
+    //     &[
+    //         accts.aaob_program.clone(),
+    //         accts.orderbook.clone(),
+    //         accts.event_queue.clone(),
+    //         accts.market_signer.clone(),
+    //         accts.reward_target.clone(),
+    //     ],
+    //     &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
+    // )?;
+
     market_product_group.sequence_number += 1;
     msg!("sequence: {}", market_product_group.sequence_number);
     accts.market_product_group.key().log();

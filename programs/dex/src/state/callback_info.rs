@@ -1,10 +1,11 @@
+use agnostic_orderbook::state::orderbook::CallbackInfo;
 use anchor_lang::{prelude::*, solana_program::pubkey::Pubkey};
 use bytemuck::{Pod, Zeroable};
 
 use crate::utils::loadable::Loadable;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod, AnchorSerialize, AnchorDeserialize)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod, AnchorSerialize, AnchorDeserialize, PartialEq)]
 /// Buffer attached to aaob events to tie owner to events
 pub struct CallBackInfo {
     pub user_account: Pubkey,
@@ -18,5 +19,13 @@ impl CallBackInfo {
             self.open_orders_idx.to_le_bytes().to_vec(),
         ]
         .concat()
+    }
+}
+
+impl CallbackInfo for CallBackInfo {
+    type CallbackId = Pubkey;
+
+    fn as_callback_id(&self) -> &Self::CallbackId {
+        &self.user_account
     }
 }
