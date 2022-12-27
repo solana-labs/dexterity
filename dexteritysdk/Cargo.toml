@@ -8,7 +8,7 @@ no-entrypoint = []
 test-bpf = []
 
 [dependencies]
-agnostic-orderbook = { version = "0.1.0", path = "../programs/agnostic-orderbook/program", features = ["no-entrypoint"] }
+agnostic-orderbook = { version = "1.0.0", path = "../programs/agnostic-orderbook/program" }
 anchor-lang = "0.24.2"
 anchor-spl = "0.24.2"
 anchor-client = "0.24.2"

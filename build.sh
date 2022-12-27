@@ -45,7 +45,7 @@ function fill_program_id() {
     fi
 }
 cd programs/agnostic-orderbook
-git checkout e37a307
+git checkout main
 cd ../..
 cargo fmt -p dex instruments dummy-oracle noop-risk-engine dex-macros constant-fees alpha-risk-engine
 # Input keypair begins here
