@@ -241,7 +241,9 @@ impl SDKContext {
 async fn load_order_book(orderbook: Pubkey, client: &SDKClient) -> SDKResult<MarketState> {
     let acct = &mut (orderbook, client.get_account(orderbook).await?);
     let info = solana_sdk::account_info::IntoAccountInfo::into_account_info(acct);
-    let market_state = MarketState::get(&info)?;
+    let mut market_state_data = accts.orderbook.data.borrow_mut();
+    let market_state = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+
     Ok(*market_state)
 }
 

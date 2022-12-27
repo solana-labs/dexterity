@@ -3,6 +3,7 @@ use std::{
     cell::{Ref, RefMut},
 };
 
+use agnostic_orderbook::state::{market_state::MarketState, AccountTag, event_queue::EventQueueHeader, critbit::Slab, Side};
 use anchor_lang::{
     prelude::*,
     solana_program::{
@@ -17,11 +18,6 @@ use anchor_lang::{
 };
 use bonfida_utils::InstructionsAccount;
 use borsh::BorshSerialize;
-
-use agnostic_orderbook::{
-    critbit::Slab,
-    state::{read_register, EventQueueHeader, MarketState, OrderSummary, SelfTradeBehavior, Side},
-};
 
 use crate::{
     error::{DexError, DomainOrProgramResult, UtilError},
@@ -118,7 +114,9 @@ pub fn process<'info>(
         match_limit,
         limit_price,
     } = params;
-    let orderbook = MarketState::get(&accts.orderbook)?;
+    let mut market_state_data = accts.orderbook.data.borrow();
+    let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+
     if max_base_qty < u64_to_quote(orderbook.min_base_order_size as u64)? {
         msg!("The base order size is too small.");
         return Err(ProgramError::InvalidArgument.into());
@@ -217,7 +215,7 @@ pub fn process<'info>(
         total_base_qty,
         total_quote_qty,
         total_base_qty_posted,
-    }: OrderSummary = read_register(&accts.event_queue).unwrap().unwrap();
+    }: OrderSummary = Option::deserialize(&mut register_acc)?.unwrap();
 
     emit!(DexOrderSummary::new(
         posted_order_id,
@@ -227,8 +225,10 @@ pub fn process<'info>(
     ));
 
     {
-        let bids = Slab::new_from_acc_info(&accts.bids, orderbook.callback_info_len as usize);
-        let asks = Slab::new_from_acc_info(&accts.asks, orderbook.callback_info_len as usize);
+        let mut bids = accts.bids.try_borrow_mut_data()?;
+        let mut asks = accts.asks.try_borrow_mut_data()?;
+        let bids = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
+        let asks = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
         let windows = &market_product_group.ewma_windows.clone();
         let best_bid = get_bbo(
             bids.find_max(),

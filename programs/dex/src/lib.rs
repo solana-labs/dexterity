@@ -494,6 +494,7 @@ pub struct ClearExpiredOrderbook<'info> {
     bids: AccountInfo<'info>,
     #[account(mut)]
     asks: AccountInfo<'info>,
+    register: AccountInfo<'info>
 }
 
 #[derive(Accounts)]

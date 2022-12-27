@@ -14,14 +14,14 @@ use anchor_lang::{
 use borsh::BorshSerialize;
 use itertools::Itertools;
 
-use agnostic_orderbook::{
-    critbit::Slab,
-    state::{read_register, MarketState, OrderSummary, Side},
+use agnostic_orderbook::state::{
+    critbit::Slab, market_state::MarketState, orderbook::OrderBookState, AccountTag, OrderSummary,
+    Side,
 };
 
 use crate::{
     error::{DexError, DomainOrProgramResult, UtilError},
-    state::risk_engine_register::*,
+    state::{risk_engine_register::*, callback_info::CallBackInfo},
     utils::{
         cpi::risk_check,
         loadable::Loadable,
@@ -158,9 +158,15 @@ pub fn process<'info>(
         ],
         &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
     )?;
-    let orderbook = MarketState::get(accts.orderbook.as_ref())?;
-    let bids = Slab::new_from_acc_info(&accts.bids, orderbook.callback_info_len as usize);
-    let asks = Slab::new_from_acc_info(&accts.asks, orderbook.callback_info_len as usize);
+
+    let mut market_state_data = accts.orderbook.data.borrow_mut();
+    let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+
+    let mut bids = accts.bids.data.borrow_mut();
+    let mut asks = accts.asks.data.borrow_mut();
+    let bids = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
+    let asks = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
+
     let best_bid = get_bbo(
         bids.find_max(),
         &bids,
@@ -183,9 +189,21 @@ pub fn process<'info>(
         windows,
     )?;
 
-    let order_summary: OrderSummary = read_register(accts.event_queue.as_ref())
-        .map_err(ProgramError::from)?
-        .unwrap();
+    // let order_summary: OrderSummary = read_register(accts.event_queue.as_ref())
+    //     .map_err(ProgramError::from)?
+    //     .unwrap();
+    // TODO: Register account here.
+    let order_summary = match agnostic_orderbook::instruction::cancel_order::process::<CallBackInfo>(
+        &accts.aaob_program.key(),
+        invoke_accounts,
+        invoke_params,
+    ) {
+        Err(error) => {
+            error.print::<AoError>();
+            return Err(DexError::AOBError.into());
+        }
+        Ok(s) => s,
+    };
     trader_risk_group.remove_open_order(product_index, order_id)?;
     let side = agnostic_orderbook::state::get_side_from_order_id(order_id);
     let order_qty = process_from_aob(order_summary.total_base_qty, product.base_decimals).abs();

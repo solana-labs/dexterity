@@ -7,7 +7,10 @@ use std::{
 
 use agnostic_orderbook::{
     instruction::consume_events,
-    state::{Event, EventQueue, EventQueueHeader, Side},
+    state::{
+        event_queue::{EventQueue, EventQueueHeader, EventRef},
+        AccountTag, Side,
+    },
 };
 use anchor_lang::{
     prelude::*,
@@ -89,11 +92,12 @@ pub fn process<'a, 'b, 'c, 'info>(
     let event_queue_header =
         EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
             .map_err(ProgramError::from)?;
-    let event_queue = EventQueue::new(
-        event_queue_header,
-        Rc::clone(&accts.event_queue.data),
-        CALLBACK_INFO_LEN as usize,
-    );
+    let event_queue = EventQueue::<[u8; 32]>::from_buffer(
+        &mut accts.event_queue.data.borrow_mut(),
+        // Rc::clone(&accts.event_queue.data),
+        // CALLBACK_INFO_LEN as usize,
+        AccountTag::EventQueue,
+    )?;
 
     let clock = &Clock::get()?;
     let mut total_iterations = 0;
@@ -183,7 +187,7 @@ fn consume_event<'c, 'info>(
     accounts: &'c [AccountInfo<'info>],
     market_product_group: &mut WithAcct<'_, 'info, RefMut<'_, MarketProductGroup>>,
     product_index: usize,
-    event: Event,
+    event: EventRef<[u8; 32]>,
     product: &Product,
     fee_model_configuration: &AccountInfo<'info>,
     fee_output_register: &AccountInfo<'info>,
@@ -193,14 +197,11 @@ fn consume_event<'c, 'info>(
     clock: &Clock,
 ) -> DomainOrProgramResult {
     match event {
-        Event::Fill {
-            taker_side,
-            maker_order_id: _,
-            quote_size,
-            base_size,
-            maker_callback_info,
-            taker_callback_info,
-        } => {
+        EventRef::Fill(event_ref) => {
+            let event = event_ref.event;
+            let maker_callback_info = event_ref.maker_callback_info;
+            let taker_callback_info = event_ref.taker_callback_info;
+
             let (maker_loader, maker_fees, mut taker) =
                 find_participants(&maker_callback_info, &taker_callback_info, accounts)?;
             let mut maker = MakerInfo {
@@ -209,12 +210,18 @@ fn consume_event<'c, 'info>(
             };
             let self_trade = maker.risk_group.key() == taker.key();
             let [total_base_qty_dex, total_quote_qty_dex] = process_fill_from_event_queue(
-                quote_size,
-                base_size,
+                event.quote_size,
+                event.base_size,
                 product.price_offset,
                 product.tick_size,
                 product.base_decimals,
             )?;
+
+            let taker_side = if event.taker_side == 0 {
+                Side::Bid
+            } else {
+                Side::Ask
+            };
             {
                 let mut maker_risk_group = maker.risk_group.load_mut()?;
                 if maker_risk_group.valid_until <= clock.unix_timestamp {
@@ -243,7 +250,6 @@ fn consume_event<'c, 'info>(
                 maker_risk_group.maker_fee_bps = computed_fees.maker_fee_bps;
                 maker_risk_group.taker_fee_bps = computed_fees.taker_fee_bps;
             }
-
             update_cash_balance(
                 market_product_group,
                 &mut maker,
@@ -302,14 +308,13 @@ fn consume_event<'c, 'info>(
                 }
             }
         }
-        Event::Out {
-            side,
-            order_id,
-            base_size,
-            callback_info,
-            delete,
-        } => {
-            if (!delete && base_size == 0) || is_expired {
+        EventRef::Out(event_ref) => {
+            let event = event_ref.event;
+            let callback_info = event_ref.callback_info;
+
+            //TODO:See
+            // !delete &&
+            if event.base_size == 0 || is_expired {
                 // PASS
             } else {
                 let user_callback_info = &CallBackInfo::try_from_slice(&callback_info[..])
@@ -321,8 +326,13 @@ fn consume_event<'c, 'info>(
                     AccountLoader::<TraderRiskGroup>::try_from(user_account_info)?;
                 let mut trader_risk_group = trader_risk_group_loader.load_mut()?;
                 let total_base_qty_dex =
-                    process_out_from_event_queue(base_size, product.base_decimals);
-                if base_size != 0 {
+                    process_out_from_event_queue(event.base_size, product.base_decimals);
+                let side = match event.side {
+                    0 => Side::Bid,
+                    1 => Side::Ask,
+                    _ => panic!("Not found"),
+                };
+                if event.base_size != 0 {
                     trader_risk_group.decrement_book_size(
                         product_index,
                         side,
@@ -330,13 +340,14 @@ fn consume_event<'c, 'info>(
                     )?;
                 }
 
-                if delete {
-                    trader_risk_group.open_orders.remove_open_order_by_index(
-                        product_index,
-                        order_index,
-                        order_id,
-                    )?;
-                }
+                // TODO: always delete
+                // if delete {
+                trader_risk_group.open_orders.remove_open_order_by_index(
+                    product_index,
+                    order_index,
+                    event.order_id,
+                )?;
+                // }
             }
         }
     };
@@ -445,8 +456,8 @@ struct MakerInfo<'c, 'info> {
 }
 
 fn find_participants<'c, 'info>(
-    maker_callback_info: &Vec<u8>,
-    taker_callback_info: &Vec<u8>,
+    maker_callback_info: &[u8; 32],
+    taker_callback_info: &[u8; 32],
     accounts: &'c [AccountInfo<'info>],
 ) -> std::result::Result<
     (
