@@ -163,6 +163,8 @@ pub struct CreateMarketAccounts<'info> {
     event_queue: AccountInfo<'info>,
     bids: AccountInfo<'info>,
     asks: AccountInfo<'info>,
+    #[account()]
+    market_product_group: AccountLoader<'info, MarketProductGroup>,
 }
 
 #[repr(C)]

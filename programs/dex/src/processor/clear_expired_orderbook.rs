@@ -8,7 +8,7 @@ use agnostic_orderbook::state::{critbit::Slab, AccountTag};
 
 use crate::{
     error::{DexError, DomainOrProgramResult, UtilError},
-    state::{products::Product, callback_info::CallBackInfo},
+    state::{callback_info::CallBackInfoDex, products::Product},
     utils::{
         orderbook::load_orderbook,
         validation::{assert, assert_keys_equal},
@@ -42,15 +42,14 @@ pub fn process(
     let ClearExpiredOrderbookParams {
         num_orders_to_cancel,
     } = params;
-    let product = validate(accts)?;
+    validate(accts)?;
 
-    let orderbook = load_orderbook(accts.orderbook.as_ref(), accts.market_signer.key)?;
     let mut num_orders_cancelled: u8 = 0;
     while num_orders_to_cancel > num_orders_cancelled {
         let mut bids = accts.bids.data.borrow_mut();
         let mut asks = accts.asks.data.borrow_mut();
-        let bids = Slab::<CallBackInfo>::from_buffer(&mut bids, AccountTag::Bids)?;
-        let asks = Slab::<CallBackInfo>::from_buffer(&mut asks, AccountTag::Asks)?;
+        let bids = Slab::<CallBackInfoDex>::from_buffer(&mut bids, AccountTag::Bids)?;
+        let asks = Slab::<CallBackInfoDex>::from_buffer(&mut asks, AccountTag::Asks)?;
 
         let (book, handle) = if bids.root().is_some() {
             (&bids, bids.find_max())
@@ -64,12 +63,27 @@ pub fn process(
                 let order_id = leaf_node.key;
                 let cancel_order_accounts =
                     agnostic_orderbook::instruction::cancel_order::Accounts {
-                        market: accts.orderbook.key,
-                        event_queue: accts.event_queue.key,
-                        bids: accts.bids.key,
-                        asks: accts.asks.key,
-                        // authority: accts.market_signer.key,
+                        market: &accts.orderbook,
+                        event_queue: &accts.event_queue,
+                        bids: &accts.bids,
+                        asks: &accts.asks,
                     };
+
+                let cancel_order_params =
+                    agnostic_orderbook::instruction::cancel_order::Params { order_id };
+
+                let _order_summary =
+                    match agnostic_orderbook::instruction::cancel_order::process::<CallBackInfoDex>(
+                        &ctx.program_id,
+                        cancel_order_accounts,
+                        cancel_order_params,
+                    ) {
+                        Err(error) => {
+                            return Err(DomainOrProgramError::ProgramErr(error));
+                        }
+                        Ok(s) => s,
+                    };
+
                 //     .get_instruction(
                 //         accts.aaob_program.key(),
                 //         agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CancelOrder

@@ -1,4 +1,4 @@
-use agnostic_orderbook::state::orderbook::CallbackInfo;
+use agnostic_orderbook::state::orderbook::CallbackInfo as CallbackInfoTrait;
 use anchor_lang::{prelude::*, solana_program::pubkey::Pubkey};
 use bytemuck::{Pod, Zeroable};
 
@@ -7,12 +7,12 @@ use crate::utils::loadable::Loadable;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod, AnchorSerialize, AnchorDeserialize, PartialEq)]
 /// Buffer attached to aaob events to tie owner to events
-pub struct CallBackInfo {
+pub struct CallBackInfoDex {
     pub user_account: Pubkey,
     pub open_orders_idx: u64,
 }
 
-impl CallBackInfo {
+impl CallBackInfoDex {
     pub fn to_vec(&self) -> Vec<u8> {
         [
             self.user_account.to_bytes().to_vec(),
@@ -22,7 +22,7 @@ impl CallBackInfo {
     }
 }
 
-impl CallbackInfo for CallBackInfo {
+impl CallbackInfoTrait for CallBackInfoDex {
     type CallbackId = Pubkey;
 
     fn as_callback_id(&self) -> &Self::CallbackId {

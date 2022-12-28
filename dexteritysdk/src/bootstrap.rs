@@ -266,7 +266,7 @@ pub async fn bootstrap_full(
         ctx.market_product_group.clone(),
         payer,
     );
-    
+
     let url = config.url.clone();
     let (clock, oracle) = match url {
         Some(cluster) => {
@@ -320,10 +320,15 @@ pub async fn bootstrap_full(
             Pubkey::find_program_address(&[product_pubkey.as_ref()], &config.dex_program_id);
 
         println!("Creating orderbook {} ({})", i, config.aaob_program_id);
-        let (orderbook_key, bids_key, asks_key, eq_key) =
-            create_orderbook(&ctx.client, config.aaob_program_id, market_signer)
-                .await
-                .unwrap();
+        let (orderbook_key, bids_key, asks_key, eq_key) = create_orderbook(
+            &ctx.client,
+            config.aaob_program_id,
+            market_signer,
+            ctx.market_product_group,
+            &ctx.authority
+        )
+        .await
+        .unwrap();
         let name_str = format!("product{:width$}", i, width = NAME_LEN - 7);
         let mut name: [u8; NAME_LEN] = Default::default();
         name.clone_from_slice(name_str.as_bytes());
@@ -429,10 +434,15 @@ pub async fn setup_combo(
     let (market_signer, _bump) =
         Pubkey::find_program_address(&[product_key.as_ref()], &admin_ctx.dex_program_id);
 
-    let (orderbook_key, bids_key, asks_key, eq_key) =
-        create_orderbook(&admin_ctx.client, admin_ctx.aaob_program_id, market_signer)
-            .await
-            .unwrap();
+    let (orderbook_key, bids_key, asks_key, eq_key) = create_orderbook(
+        &admin_ctx.client,
+        admin_ctx.aaob_program_id,
+        market_signer,
+        admin_ctx.market_product_group,
+        &admin_ctx.authority,
+    )
+    .await
+    .unwrap();
 
     let ratios = combo_legs.iter().map(|(i, _)| *i).collect::<Vec<i8>>();
     let products = combo_legs

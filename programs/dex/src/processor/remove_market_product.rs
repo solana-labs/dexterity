@@ -6,7 +6,7 @@ use bonfida_utils::InstructionsAccount;
 
 use crate::{
     error::{DexError, DomainOrProgramResult, UtilError},
-    state::{products::Product, callback_info::CallBackInfo},
+    state::{products::Product, callback_info::CallBackInfoDex},
     utils::validation::{assert, assert_keys_equal},
     DomainOrProgramError, RemoveMarketProduct,
 };
@@ -55,7 +55,7 @@ pub fn process(ctx: Context<RemoveMarketProduct>) -> DomainOrProgramResult {
     };
 
     let close_market_param = agnostic_orderbook::instruction::close_market::Params {};
-    if let Err(error) = agnostic_orderbook::instruction::close_market::process::<CallBackInfo>(
+    if let Err(error) = agnostic_orderbook::instruction::close_market::process::<CallBackInfoDex>(
         ctx.program_id,
         close_market_accounts,
         close_market_param,

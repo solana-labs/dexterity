@@ -1,8 +1,10 @@
 use agnostic_orderbook::{
     error::AoError,
     state::{
-        critbit::Slab, event_queue::EventQueueHeader, market_state::MarketState, AccountTag,
-        OrderSummary, Side,
+        critbit::Slab,
+        event_queue::{EventQueue, EventQueueHeader},
+        market_state::MarketState,
+        AccountTag, OrderSummary, Side,
     },
 };
 use anchor_lang::{
@@ -24,7 +26,7 @@ use crate::{
     error::{DexError, DomainOrProgramResult, UtilError},
     find_fees_ix,
     state::{
-        callback_info::CallBackInfo,
+        callback_info::CallBackInfoDex,
         enums::OrderType,
         fee_model::{TraderFeeParams, TraderFees},
         products::Product,
@@ -115,12 +117,14 @@ pub fn process<'info>(
         match_limit,
         limit_price,
     } = params;
-    let mut market_state_data = accts.orderbook.data.borrow_mut();
-    let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+    {
+        let mut market_data = accts.orderbook.data.borrow_mut();
+        let market_state = MarketState::from_buffer(&mut market_data, AccountTag::Market)?;
 
-    if max_base_qty < u64_to_quote(orderbook.min_base_order_size as u64)? {
-        msg!("The base order size is too small.");
-        return Err(ProgramError::InvalidArgument.into());
+        if max_base_qty < u64_to_quote(market_state.min_base_order_size as u64)? {
+            msg!("The base order size is too small.");
+            return Err(ProgramError::InvalidArgument.into());
+        }
     }
     let (product_index, _) = market_product_group.find_product_index(&accts.product.key())?;
     let product = market_product_group.market_products[product_index];
@@ -138,7 +142,7 @@ pub fn process<'info>(
         OrderType::PostOnly => (true, true),
     };
 
-    let callback_info = CallBackInfo {
+    let callback_info = CallBackInfoDex {
         user_account: accts.trader_risk_group.key(),
         open_orders_idx: trader_risk_group.open_orders.get_next_index() as u64,
     };
@@ -170,7 +174,7 @@ pub fn process<'info>(
         bids: &accts.bids,
         asks: &accts.asks,
     };
-    let new_order_params = agnostic_orderbook::instruction::new_order::Params::<CallBackInfo> {
+    let new_order_params = agnostic_orderbook::instruction::new_order::Params::<CallBackInfoDex> {
         max_base_qty: max_base_qty.round(product.base_decimals as u32)?.m as u64,
         max_quote_qty: u64::MAX,
         limit_price: limit_price_aob,
@@ -181,13 +185,13 @@ pub fn process<'info>(
         post_allowed,
         self_trade_behavior,
     };
-
+    msg!("Calling agnostic_orderbook proceess new_order");
     let OrderSummary {
         posted_order_id,
         total_base_qty,
         total_base_qty_posted,
         total_quote_qty,
-    } = match agnostic_orderbook::instruction::new_order::process::<CallBackInfo>(
+    } = match agnostic_orderbook::instruction::new_order::process::<CallBackInfoDex>(
         ctx.program_id,
         new_order_accounts,
         new_order_params,
@@ -199,31 +203,12 @@ pub fn process<'info>(
         }
         Ok(s) => s,
     };
+    
+    let mut event_queue_data = accts.event_queue.data.borrow_mut();
+    let event_queue =
+        EventQueue::<CallBackInfoDex>::from_buffer(&mut event_queue_data, AccountTag::EventQueue)?;
 
-    // invoke_signed_unchecked(
-
-    //     .get_instruction(
-    //         accts.aaob_program.key(),
-    //         agnostic_orderbook::instruction::AgnosticOrderbookInstruction::NewOrder as u8,
-
-    //     ),
-    //     &[
-    //         accts.aaob_program.clone(),
-    //         accts.orderbook.clone(),
-    //         accts.market_signer.clone(),
-    //         accts.event_queue.clone(),
-    //         accts.bids.clone(),
-    //         accts.asks.clone(),
-    //     ],
-    //     &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
-    // )?;
-
-    let ending_queue_size =
-        EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
-            .map_err(ProgramError::from)?
-            .count;
-
-    let new_events = ending_queue_size.saturating_sub(starting_queue_size);
+    let new_events = event_queue.len().saturating_sub(starting_queue_size);
 
     update_new_queue_events(
         &product,
@@ -242,8 +227,8 @@ pub fn process<'info>(
     {
         let mut bids = accts.bids.try_borrow_mut_data()?;
         let mut asks = accts.asks.try_borrow_mut_data()?;
-        let bids: Slab<CallBackInfo> = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
-        let asks: Slab<CallBackInfo> = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
+        let bids: Slab<CallBackInfoDex> = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
+        let asks: Slab<CallBackInfoDex> = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
         let windows = &market_product_group.ewma_windows.clone();
         let best_bid = get_bbo(
             bids.find_max(),

@@ -21,7 +21,7 @@ use agnostic_orderbook::state::{
 
 use crate::{
     error::{DexError, DomainOrProgramError, DomainOrProgramResult, UtilError},
-    state::{callback_info::CallBackInfo, risk_engine_register::*},
+    state::{callback_info::CallBackInfoDex, risk_engine_register::*},
     utils::{
         cpi::risk_check,
         loadable::Loadable,
@@ -140,8 +140,8 @@ pub fn process<'info>(
     };
     let cancel_order_params = agnostic_orderbook::instruction::cancel_order::Params { order_id };
 
-    let mut order_summary = match agnostic_orderbook::instruction::cancel_order::process::<
-        CallBackInfo,
+    let order_summary = match agnostic_orderbook::instruction::cancel_order::process::<
+        CallBackInfoDex,
     >(&ctx.program_id, cancel_order_account, cancel_order_params)
     {
         Err(error) => {
@@ -177,13 +177,13 @@ pub fn process<'info>(
     //     &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
     // )?;
 
-    let mut market_state_data = accts.orderbook.data.borrow_mut();
-    let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+    // let mut market_state_data = accts.orderbook.data.borrow_mut();
+    // let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
 
     let mut bids = accts.bids.data.borrow_mut();
     let mut asks = accts.asks.data.borrow_mut();
-    let bids: Slab<CallBackInfo> = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
-    let asks: Slab<CallBackInfo> = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
+    let bids: Slab<CallBackInfoDex> = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
+    let asks: Slab<CallBackInfoDex> = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
 
     let best_bid = get_bbo(
         bids.find_max(),
