@@ -1,5 +1,5 @@
 #![allow(non_snake_case)]
-use agnostic_orderbook::state::{Event, Side};
+use agnostic_orderbook::state::{critbit::Slab, Side};
 use anchor_lang::Key;
 use dex::{
     state::{constants::*, market_product_group::*, trader_risk_group::*},
@@ -42,16 +42,22 @@ async fn test_expiration() {
         let product = KeypairD::new();
         let (market_signer, _) =
             Pubkey::find_program_address(&[product.pubkey().as_ref()], &ctx.dex_program_id);
-        let event_size = Event::compute_slot_size(40) as u64;
+        let event_size = agnostic_orderbook::state::event_queue::EventQueue::<
+            dex::state::callback_info::CallBackInfoDex,
+        >::compute_allocation_size(5000) as u64;
+        let bids_asks_len =
+            Slab::<dex::state::callback_info::CallBackInfoDex>::compute_allocation_size(1000);
         let (orderbook_key, bids_key, asks_key, eq_key) = create_orderbook_with_params(
             &ctx.client,
             ctx.aaob_program_id,
             market_signer,
-            75 + event_size * 5000,
-            10000,
-            10000,
+            event_size,
+            bids_asks_len as u64,
+            bids_asks_len as u64,
             1, // min_base_order_size
             1000,
+            ctx.market_product_group,
+            &ctx.authority,
         )
         .await
         .unwrap();
@@ -153,6 +159,12 @@ async fn test_expiration() {
             .unwrap()
             .cum_funding_per_share,
         Fractional::new(10, 0)
+    );
+    dbg!(
+        mpg.market_products[0]
+            .try_to_outright()
+            .unwrap()
+            .num_queue_events
     );
     assert!(
         mpg.market_products[0]

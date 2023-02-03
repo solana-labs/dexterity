@@ -7,7 +7,10 @@ use std::{
 
 use agnostic_orderbook::{
     instruction::consume_events,
-    state::{Event, EventQueue, EventQueueHeader, Side},
+    state::{
+        event_queue::{EventQueue, EventQueueHeader, EventRef},
+        AccountTag, Side,
+    },
 };
 use anchor_lang::{
     prelude::*,
@@ -23,7 +26,7 @@ use crate::{
     error::{DexError, DomainOrProgramError, DomainOrProgramResult, UtilError},
     find_fees_ix,
     state::{
-        callback_info::CallBackInfo,
+        callback_info::CallBackInfoDex,
         constants::CALLBACK_INFO_LEN,
         fee_model::{TraderFeeParams, TraderFees},
         market_product_group::MarketProductGroup,
@@ -86,74 +89,94 @@ pub fn process<'a, 'b, 'c, 'info>(
     assert_keys_equal(product.orderbook, accts.orderbook.key())?;
     let is_expired = market_product_group.is_expired(&product);
 
-    let event_queue_header =
-        EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
-            .map_err(ProgramError::from)?;
-    let event_queue = EventQueue::new(
-        event_queue_header,
-        Rc::clone(&accts.event_queue.data),
-        CALLBACK_INFO_LEN as usize,
-    );
+    // let event_queue_header =
+    //     EventQueueHeader::deserialize(&mut (&accts.event_queue.data.borrow() as &[u8]))
+    //         .map_err(ProgramError::from)?;
+    let total_iterations = {
+        let mut event_queue_data = accts.event_queue.data.borrow_mut();
+        let event_queue = EventQueue::<CallBackInfoDex>::from_buffer(
+            &mut event_queue_data,
+            // Rc::clone(&accts.event_queue.data),
+            // CALLBACK_INFO_LEN as usize,
+            AccountTag::EventQueue,
+        )?;
 
-    let clock = &Clock::get()?;
-    let mut total_iterations = 0;
-    for event in event_queue.iter().take(max_iterations as usize) {
-        let consume_event_result = consume_event(
-            ctx.remaining_accounts,
-            &mut market_product_group,
-            product_index,
-            event,
-            &product,
-            &accts.fee_model_configuration_acct,
-            &accts.fee_output_register,
-            &accts.fee_model_program,
-            &accts.risk_and_fee_signer,
-            is_expired,
-            clock,
-        );
-        match consume_event_result {
-            Ok(_) => total_iterations += 1,
-            Err(DomainOrProgramError::DexErr(DexError::MissingUserAccount)) => {
-                msg!("Missing required user account");
-                break;
-            }
-            Err(e) => {
-                msg!("Encountered unexpected error while consuming event");
-                return Err(e);
+        let clock = &Clock::get()?;
+        let mut total_iterations = 0;
+        for event in event_queue.iter().take(max_iterations as usize) {
+            let consume_event_result = consume_event(
+                ctx.remaining_accounts,
+                &mut market_product_group,
+                product_index,
+                event,
+                &product,
+                &accts.fee_model_configuration_acct,
+                &accts.fee_output_register,
+                &accts.fee_model_program,
+                &accts.risk_and_fee_signer,
+                is_expired,
+                clock,
+            );
+            match consume_event_result {
+                Ok(_) => total_iterations += 1,
+                Err(DomainOrProgramError::DexErr(DexError::MissingUserAccount)) => {
+                    msg!("Missing required user account");
+                    break;
+                }
+                Err(e) => {
+                    msg!("Encountered unexpected error while consuming event");
+                    return Err(e);
+                }
             }
         }
-    }
 
-    if total_iterations == 0 {
-        msg!("Failed to complete one iteration");
-        return Err(DexError::NoOp.into());
-    }
+        if total_iterations == 0 {
+            msg!("Failed to complete one iteration");
+            return Err(DexError::NoOp.into());
+        }
+        total_iterations
+    };
 
-    let pop_events_instruction = agnostic_orderbook::instruction::consume_events::Accounts {
-        market: accts.orderbook.key,
-        event_queue: accts.event_queue.key,
-        authority: accts.market_signer.key,
-        reward_target: accts.reward_target.key,
+    let pop_event_accounts = agnostic_orderbook::instruction::consume_events::Accounts {
+        market: &accts.orderbook,
+        event_queue: &accts.event_queue,
+    };
+    let pop_event_params = agnostic_orderbook::instruction::consume_events::Params {
+        number_of_entries_to_consume: total_iterations,
+    };
+    if let Err(error) = agnostic_orderbook::instruction::consume_events::process::<CallBackInfoDex>(
+        ctx.program_id,
+        pop_event_accounts,
+        pop_event_params,
+    ) {
+        return Err(DomainOrProgramError::ProgramErr(error));
     }
-    .get_instruction(
-        accts.aaob_program.key(),
-        agnostic_orderbook::instruction::AgnosticOrderbookInstruction::ConsumeEvents as u8,
-        agnostic_orderbook::instruction::consume_events::Params {
-            number_of_entries_to_consume: total_iterations,
-        },
-    );
+    //TODO: Remove
+    // let pop_events_instruction =
+    // agnostic_orderbook::instruction::consume_events::ac {
+    // //     market: accts.orderbook.key,
+    // //     event_queue: accts.event_queue.key,
+    // //     authority: accts.market_signer.key,
+    // //     reward_target: accts.reward_target.key,
+    // // }
+    // .get_instruction(
+    //     accts.aaob_program.key(),
+    //     agnostic_orderbook::instruction::AgnosticOrderbookInstruction::ConsumeEvents as u8,
 
-    invoke_signed_unchecked(
-        &pop_events_instruction,
-        &[
-            accts.aaob_program.clone(),
-            accts.orderbook.clone(),
-            accts.event_queue.clone(),
-            accts.market_signer.clone(),
-            accts.reward_target.clone(),
-        ],
-        &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
-    )?;
+    // );
+
+    // invoke_signed_unchecked(
+    //     &pop_events_instruction,
+    //     &[
+    //         accts.aaob_program.clone(),
+    //         accts.orderbook.clone(),
+    //         accts.event_queue.clone(),
+    //         accts.market_signer.clone(),
+    //         accts.reward_target.clone(),
+    //     ],
+    //     &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
+    // )?;
+
     market_product_group.sequence_number += 1;
     msg!("sequence: {}", market_product_group.sequence_number);
     accts.market_product_group.key().log();
@@ -183,7 +206,7 @@ fn consume_event<'c, 'info>(
     accounts: &'c [AccountInfo<'info>],
     market_product_group: &mut WithAcct<'_, 'info, RefMut<'_, MarketProductGroup>>,
     product_index: usize,
-    event: Event,
+    event: EventRef<CallBackInfoDex>,
     product: &Product,
     fee_model_configuration: &AccountInfo<'info>,
     fee_output_register: &AccountInfo<'info>,
@@ -193,14 +216,11 @@ fn consume_event<'c, 'info>(
     clock: &Clock,
 ) -> DomainOrProgramResult {
     match event {
-        Event::Fill {
-            taker_side,
-            maker_order_id: _,
-            quote_size,
-            base_size,
-            maker_callback_info,
-            taker_callback_info,
-        } => {
+        EventRef::Fill(event_ref) => {
+            let event = event_ref.event;
+            let maker_callback_info = event_ref.maker_callback_info;
+            let taker_callback_info = event_ref.taker_callback_info;
+
             let (maker_loader, maker_fees, mut taker) =
                 find_participants(&maker_callback_info, &taker_callback_info, accounts)?;
             let mut maker = MakerInfo {
@@ -209,12 +229,18 @@ fn consume_event<'c, 'info>(
             };
             let self_trade = maker.risk_group.key() == taker.key();
             let [total_base_qty_dex, total_quote_qty_dex] = process_fill_from_event_queue(
-                quote_size,
-                base_size,
+                event.quote_size,
+                event.base_size,
                 product.price_offset,
                 product.tick_size,
                 product.base_decimals,
             )?;
+
+            let taker_side = if event.taker_side == 0 {
+                Side::Bid
+            } else {
+                Side::Ask
+            };
             {
                 let mut maker_risk_group = maker.risk_group.load_mut()?;
                 if maker_risk_group.valid_until <= clock.unix_timestamp {
@@ -243,7 +269,6 @@ fn consume_event<'c, 'info>(
                 maker_risk_group.maker_fee_bps = computed_fees.maker_fee_bps;
                 maker_risk_group.taker_fee_bps = computed_fees.taker_fee_bps;
             }
-
             update_cash_balance(
                 market_product_group,
                 &mut maker,
@@ -302,27 +327,30 @@ fn consume_event<'c, 'info>(
                 }
             }
         }
-        Event::Out {
-            side,
-            order_id,
-            base_size,
-            callback_info,
-            delete,
-        } => {
-            if (!delete && base_size == 0) || is_expired {
+        EventRef::Out(event_ref) => {
+            let event = event_ref.event;
+            let callback_info = event_ref.callback_info;
+
+            //TODO:See
+            // !delete &&
+            if event.base_size == 0 || is_expired {
                 // PASS
             } else {
-                let user_callback_info = &CallBackInfo::try_from_slice(&callback_info[..])
-                    .map_err(|_| UtilError::DeserializeError)?;
-                let user_account_info = find_acct(accounts, &user_callback_info.user_account)?;
-                let order_index = user_callback_info.open_orders_idx as usize;
+                // let user_callback_info = callback_info.user_account;
+                let user_account_info = find_acct(accounts, &callback_info.user_account)?;
+                let order_index = callback_info.open_orders_idx as usize;
 
                 let trader_risk_group_loader =
                     AccountLoader::<TraderRiskGroup>::try_from(user_account_info)?;
                 let mut trader_risk_group = trader_risk_group_loader.load_mut()?;
                 let total_base_qty_dex =
-                    process_out_from_event_queue(base_size, product.base_decimals);
-                if base_size != 0 {
+                    process_out_from_event_queue(event.base_size, product.base_decimals);
+                let side = match event.side {
+                    0 => Side::Bid,
+                    1 => Side::Ask,
+                    _ => panic!("Not found"),
+                };
+                if event.base_size != 0 {
                     trader_risk_group.decrement_book_size(
                         product_index,
                         side,
@@ -330,13 +358,14 @@ fn consume_event<'c, 'info>(
                     )?;
                 }
 
-                if delete {
-                    trader_risk_group.open_orders.remove_open_order_by_index(
-                        product_index,
-                        order_index,
-                        order_id,
-                    )?;
-                }
+                // TODO: always delete
+                // if delete {
+                trader_risk_group.open_orders.remove_open_order_by_index(
+                    product_index,
+                    order_index,
+                    event.order_id,
+                )?;
+                // }
             }
         }
     };
@@ -445,8 +474,8 @@ struct MakerInfo<'c, 'info> {
 }
 
 fn find_participants<'c, 'info>(
-    maker_callback_info: &Vec<u8>,
-    taker_callback_info: &Vec<u8>,
+    maker_callback_info: &CallBackInfoDex,
+    taker_callback_info: &CallBackInfoDex,
     accounts: &'c [AccountInfo<'info>],
 ) -> std::result::Result<
     (
@@ -456,15 +485,16 @@ fn find_participants<'c, 'info>(
     ),
     DomainOrProgramError,
 > {
-    let maker_key = &CallBackInfo::try_from_slice(&maker_callback_info[..])
-        .map_err(|_| UtilError::DeserializeError)?
-        .user_account;
-    let taker_key = &CallBackInfo::try_from_slice(&taker_callback_info[..])
-        .map_err(|_| UtilError::DeserializeError)?
-        .user_account;
-    let maker_risk_group_acct = find_acct(accounts, maker_key)?;
+    // let maker_key = &CallBackInfoDex::try_from_slice(&maker_callback_info[..])
+    //     .map_err(|_| UtilError::DeserializeError)?
+    //     .user_account;
+    // let taker_key = &CallBackInfoDex::try_from_slice(&taker_callback_info[..])
+    //     .map_err(|_| UtilError::DeserializeError)?
+    //     .user_account;
+    // TODO: verify
+    let maker_risk_group_acct = find_acct(accounts, &maker_callback_info.user_account)?;
     let maker_risk_group_loader = AccountLoader::try_from(maker_risk_group_acct)?;
-    let taker_risk_group_acct = find_acct(accounts, taker_key)?;
+    let taker_risk_group_acct = find_acct(accounts, &taker_callback_info.user_account)?;
     let taker_risk_group_loader = AccountLoader::try_from(taker_risk_group_acct)?;
     let maker_fee_acct_key = {
         // Must not mutably load anything since the binary search will borrow from the accounts slice,

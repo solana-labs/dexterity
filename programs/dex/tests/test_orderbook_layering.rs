@@ -135,10 +135,15 @@ async fn test_fill_up_market_product_group() {
     let product = Keypair::new();
     let (market_signer, _) =
         Pubkey::find_program_address(&[product.pubkey().as_ref()], &ctx.dex_program_id);
-    let (orderbook_key, _bids_key, _asks_key, _eq_key) =
-        create_orderbook(&ctx.client, ctx.aaob_program_id, market_signer)
-            .await
-            .unwrap();
+    let (orderbook_key, _bids_key, _asks_key, _eq_key) = create_orderbook(
+        &ctx.client,
+        ctx.aaob_program_id,
+        market_signer,
+        ctx.market_product_group,
+        &ctx.authority
+    )
+    .await
+    .unwrap();
     let name_str = format!("product{:width$}", "N", width = NAME_LEN - 7);
     let mut name = [0; NAME_LEN];
     name.clone_from_slice(name_str.as_bytes());

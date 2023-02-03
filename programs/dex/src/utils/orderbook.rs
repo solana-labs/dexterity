@@ -6,10 +6,12 @@ use crate::{
     },
     utils::numeric::Fractional,
 };
-use agnostic_orderbook::{
+use agnostic_orderbook::state::{
     critbit::{NodeHandle, Slab},
-    state::{MarketState, Side},
+    market_state::MarketState,
+    Side, AccountTag,
 };
+
 use anchor_lang::solana_program::{
     account_info::AccountInfo, clock::Clock, msg, program_error::ProgramError, pubkey::Pubkey,
 };
@@ -20,28 +22,25 @@ pub fn load_orderbook(
     account: &AccountInfo,
     market_signer: &Pubkey,
 ) -> std::result::Result<MarketState, DomainOrProgramError> {
-    let orderbook_state = MarketState::get(account)?;
-    if orderbook_state.tag != agnostic_orderbook::state::AccountTag::Market as u64 {
-        msg!("Invalid orderbook");
-        return Err(ProgramError::InvalidArgument.into());
-    }
-    if &orderbook_state.caller_authority != &market_signer.to_bytes() {
-        msg!("The provided orderbook isn't owned by the market signer.");
-        return Err(ProgramError::InvalidArgument.into());
-    }
+    let mut market_state_data = account.data.borrow_mut();
+    let orderbook_state = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+    // if &orderbook_state.caller_authority != &market_signer.to_bytes() {
+    //     msg!("The provided orderbook isn't owned by the market signer.");
+    //     return Err(ProgramError::InvalidArgument.into());
+    // }
     Ok(*orderbook_state)
 }
 
-pub fn get_bbo(
+pub fn get_bbo<C>(
     node: Option<NodeHandle>,
-    book: &Slab,
+    book: &Slab<C>,
     side: Side,
     tick_size: Fractional,
     price_offset: Fractional,
 ) -> std::result::Result<Fractional, DomainOrProgramError> {
     match node {
         Some(nh) => {
-            let leaf_node = book.get_node(nh).unwrap().as_leaf().unwrap().to_owned();
+            let leaf_node = book.leaf_nodes[nh as usize];
             let price_aob = leaf_node.price();
             let price_dex = Fractional::new((price_aob >> 32) as i64, 0)
                 .checked_mul(tick_size)?

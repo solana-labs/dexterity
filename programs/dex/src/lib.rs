@@ -42,6 +42,14 @@ declare_id!("Dex1111111111111111111111111111111111111111");
 pub mod dex {
     use super::*;
 
+    // new instruction:
+    pub fn create_market(
+        ctx: Context<CreateMarketAccounts>,
+        params: agnostic_orderbook::instruction::create_market::Params,
+    ) -> ProgramResult {
+        processor::create_market::process(ctx, params).map_err(log_errors)
+    }
+
     pub fn initialize_market_product_group(
         ctx: Context<InitializeMarketProductGroup>,
         params: InitializeMarketProductGroupParams,
@@ -146,6 +154,17 @@ pub mod dex {
 fn log_errors(e: DomainOrProgramError) -> ProgramError {
     msg!("Error: {}", e);
     e.into()
+}
+
+#[derive(Accounts)]
+pub struct CreateMarketAccounts<'info> {
+    authority: Signer<'info>,
+    market: AccountInfo<'info>,
+    event_queue: AccountInfo<'info>,
+    bids: AccountInfo<'info>,
+    asks: AccountInfo<'info>,
+    #[account()]
+    market_product_group: AccountLoader<'info, MarketProductGroup>,
 }
 
 #[repr(C)]

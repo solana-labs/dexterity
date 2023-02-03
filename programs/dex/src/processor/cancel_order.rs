@@ -14,14 +14,14 @@ use anchor_lang::{
 use borsh::BorshSerialize;
 use itertools::Itertools;
 
-use agnostic_orderbook::{
-    critbit::Slab,
-    state::{read_register, MarketState, OrderSummary, Side},
+use agnostic_orderbook::state::{
+    critbit::Slab, market_state::MarketState, orderbook::OrderBookState, AccountTag, OrderSummary,
+    Side,
 };
 
 use crate::{
-    error::{DexError, DomainOrProgramResult, UtilError},
-    state::risk_engine_register::*,
+    error::{DexError, DomainOrProgramError, DomainOrProgramResult, UtilError},
+    state::{callback_info::CallBackInfoDex, risk_engine_register::*},
     utils::{
         cpi::risk_check,
         loadable::Loadable,
@@ -132,35 +132,59 @@ pub fn process<'info>(
 
     // Validation
     assert_keys_equal(product.orderbook, accts.orderbook.key())?;
-    let cancel_order_instruction = agnostic_orderbook::instruction::cancel_order::Accounts {
-        market: accts.orderbook.key,
-        event_queue: accts.event_queue.key,
-        bids: accts.bids.key,
-        asks: accts.asks.key,
-        authority: accts.market_signer.key,
-    }
-    .get_instruction(
-        accts.aaob_program.key(),
-        agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CancelOrder as u8,
-        agnostic_orderbook::instruction::cancel_order::Params { order_id },
-    );
+    let cancel_order_account = agnostic_orderbook::instruction::cancel_order::Accounts {
+        market: &accts.orderbook,
+        event_queue: &accts.event_queue,
+        bids: &accts.bids,
+        asks: &accts.asks,
+    };
+    let cancel_order_params = agnostic_orderbook::instruction::cancel_order::Params { order_id };
+
+    let order_summary = match agnostic_orderbook::instruction::cancel_order::process::<
+        CallBackInfoDex,
+    >(&ctx.program_id, cancel_order_account, cancel_order_params)
+    {
+        Err(error) => {
+            // error.print::<AoError>();
+            return Err(DomainOrProgramError::ProgramErr(error));
+        }
+        Ok(s) => s,
+    };
+
+    // let cancel_order_instruction = agnostic_orderbook::instruction::cancel_order::Accounts {
+    //     market: accts.orderbook.key,
+    //     event_queue: accts.event_queue.key,
+    //     bids: accts.bids.key,
+    //     asks: accts.asks.key,
+    //     authority: accts.market_signer.key,
+    // }
+    // .get_instruction(
+    //     accts.aaob_program.key(),
+    //     agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CancelOrder as u8,
+    // );
     // If the order was filled, the AOB will return and error.
     // TODO: Do we need to have special behavior to resolve this error.
-    invoke_signed_unchecked(
-        &cancel_order_instruction,
-        &[
-            accts.aaob_program.clone(),
-            accts.orderbook.clone(),
-            accts.market_signer.clone(),
-            accts.event_queue.clone(),
-            accts.bids.clone(),
-            accts.asks.clone(),
-        ],
-        &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
-    )?;
-    let orderbook = MarketState::get(accts.orderbook.as_ref())?;
-    let bids = Slab::new_from_acc_info(&accts.bids, orderbook.callback_info_len as usize);
-    let asks = Slab::new_from_acc_info(&accts.asks, orderbook.callback_info_len as usize);
+    // invoke_signed_unchecked(
+    //     &cancel_order_instruction,
+    //     &[
+    //         accts.aaob_program.clone(),
+    //         accts.orderbook.clone(),
+    //         accts.market_signer.clone(),
+    //         accts.event_queue.clone(),
+    //         accts.bids.clone(),
+    //         accts.asks.clone(),
+    //     ],
+    //     &[&[accts.product.key.as_ref(), &[product.bump as u8]]],
+    // )?;
+
+    // let mut market_state_data = accts.orderbook.data.borrow_mut();
+    // let orderbook = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+
+    let mut bids = accts.bids.data.borrow_mut();
+    let mut asks = accts.asks.data.borrow_mut();
+    let bids: Slab<CallBackInfoDex> = Slab::from_buffer(&mut bids, AccountTag::Bids)?;
+    let asks: Slab<CallBackInfoDex> = Slab::from_buffer(&mut asks, AccountTag::Asks)?;
+
     let best_bid = get_bbo(
         bids.find_max(),
         &bids,
@@ -182,10 +206,22 @@ pub fn process<'info>(
         best_ask,
         windows,
     )?;
-
-    let order_summary: OrderSummary = read_register(accts.event_queue.as_ref())
-        .map_err(ProgramError::from)?
-        .unwrap();
+    // TODO: See if we still need this.
+    // let order_summary: OrderSummary = read_register(accts.event_queue.as_ref())
+    //     .map_err(ProgramError::from)?
+    //     .unwrap();
+    // TODO: Register account here.
+    // let order_summary = match agnostic_orderbook::instruction::cancel_order::process::<CallBackInfo>(
+    //     &accts.aaob_program.key(),
+    //     invoke_accounts,
+    //     invoke_params,
+    // ) {
+    //     Err(error) => {
+    //         error.print::<AoError>();
+    //         return Err(DexError::AOBError.into());
+    //     }
+    //     Ok(s) => s,
+    // };
     trader_risk_group.remove_open_order(product_index, order_id)?;
     let side = agnostic_orderbook::state::get_side_from_order_id(order_id);
     let order_qty = process_from_aob(order_summary.total_base_qty, product.base_decimals).abs();

@@ -1,15 +1,18 @@
-use agnostic_orderbook::{
-    instruction::create_market,
-    state::{EVENT_QUEUE_HEADER_LEN, REGISTER_SIZE},
-};
+use crate::{common::utils::*, sdk_client::SDKClient, KeypairD};
+use agnostic_orderbook::state::critbit::Slab;
+use agnostic_orderbook::state::market_state::MarketState;
+use agnostic_orderbook::state::orderbook::CallbackInfo;
+use anchor_lang::prelude::*;
+use anchor_lang::InstructionData;
 use bonfida_utils::InstructionsAccount;
 use solana_program::{
     instruction::Instruction, pubkey::Pubkey, system_instruction::create_account,
 };
 use solana_program_test::ProgramTestContext;
-use solana_sdk::signature::{Keypair, Signer};
-
-use crate::{common::utils::*, sdk_client::SDKClient, KeypairD};
+use solana_sdk::{
+    signature::{Keypair, Signer},
+    system_instruction::create_nonce_account,
+};
 
 pub fn create_orderbook_ixs(
     client: &SDKClient,
@@ -24,15 +27,18 @@ pub fn create_orderbook_ixs(
     asks_size: u64,
     min_base_order_size: u64,
     cranker_reward: u64,
+    market_product_group: Pubkey,
+    authority: Pubkey,
 ) -> Vec<Instruction> {
-    let size = 192_u64;
-    let lamports = client.rent_exempt(size as usize).max(1);
+    let size = 8 + MarketState::LEN;
+    let lamports = client.rent_exempt(size).max(1);
+    //TODO: Change
     let create_market_account_ix = create_account(
         &client.payer.pubkey(),
         &market_account.pubkey(),
         lamports,
-        size,
-        &aaob_program_id,
+        size as u64,
+        &dex::ID,
     );
     let lamports = client.rent_exempt(eq_size as usize).max(1);
     // Create event queue account
@@ -41,7 +47,7 @@ pub fn create_orderbook_ixs(
         &event_queue_account.pubkey(),
         lamports,
         eq_size,
-        &aaob_program_id,
+        &dex::ID,
     );
     // Create bids account
     let lamports = client.rent_exempt(bids_size as usize).max(1);
@@ -50,7 +56,7 @@ pub fn create_orderbook_ixs(
         &bids_account.pubkey(),
         lamports,
         bids_size,
-        &aaob_program_id,
+        &dex::ID,
     );
     // Create asks account
     let lamports = client.rent_exempt(asks_size as usize).max(1);
@@ -59,27 +65,29 @@ pub fn create_orderbook_ixs(
         &asks_account.pubkey(),
         lamports,
         asks_size,
-        &aaob_program_id,
+        &dex::ID,
     );
-    // Create Market
-    let create_market_ix = create_market::Accounts {
-        market: &market_account.pubkey(),
-        event_queue: &event_queue_account.pubkey(),
-        bids: &bids_account.pubkey(),
-        asks: &asks_account.pubkey(),
-    }
-    .get_instruction(
-        aaob_program_id,
-        agnostic_orderbook::instruction::AgnosticOrderbookInstruction::CreateMarket as u8,
-        create_market::Params {
-            caller_authority: caller_authority.to_bytes(),
-            callback_info_len: 40,
-            callback_id_len: 32,
-            min_base_order_size,
-            tick_size: 1,
-            cranker_reward,
-        },
-    );
+
+    let create_market_ix = Instruction {
+        program_id: dex::ID,
+        data: dex::instruction::CreateMarket {
+            params: agnostic_orderbook::instruction::create_market::Params {
+                min_base_order_size,
+                tick_size: 1,
+            },
+        }
+        .data(),
+        accounts: dex::accounts::CreateMarketAccounts {
+            authority,
+            market: market_account.pubkey(),
+            event_queue: event_queue_account.pubkey(),
+            bids: bids_account.pubkey(),
+            asks: asks_account.pubkey(),
+            market_product_group,
+        }
+        .to_account_metas(Some(true)),
+    };
+
     vec![
         create_market_account_ix,
         create_event_queue_account_ix,
@@ -93,6 +101,8 @@ pub async fn create_orderbook(
     client: &SDKClient,
     aaob_program_id: Pubkey,
     caller_authority: Pubkey,
+    market_product_group: Pubkey,
+    authority: &KeypairD,
 ) -> std::result::Result<(Pubkey, Pubkey, Pubkey, Pubkey), SDKError> {
     // Create market state account
     let market_account = KeypairD::new();
@@ -100,10 +110,12 @@ pub async fn create_orderbook(
     let bids_account = KeypairD::new();
     let asks_account = KeypairD::new();
 
-    let event_size =
-        agnostic_orderbook::state::Event::compute_slot_size(std::mem::size_of::<Pubkey>() + 8);
-    let eq_size = 1000 * event_size + EVENT_QUEUE_HEADER_LEN + REGISTER_SIZE;
-
+    // TODO: verify the desired event capacity
+    let event_size = agnostic_orderbook::state::event_queue::EventQueue::<
+        dex::state::callback_info::CallBackInfoDex,
+    >::compute_allocation_size(1000);
+    let bids_asks_len =
+        Slab::<dex::state::callback_info::CallBackInfoDex>::compute_allocation_size(1000);
     let ixs = create_orderbook_ixs(
         client,
         aaob_program_id,
@@ -112,16 +124,19 @@ pub async fn create_orderbook(
         &event_queue_account,
         &bids_account,
         &asks_account,
-        eq_size as u64,
-        65_536_u64,
-        65_536_u64,
+        event_size as u64,
+        bids_asks_len as u64,
+        bids_asks_len as u64,
         1,
         1000,
+        market_product_group,
+        authority.pubkey(),
     );
     client
         .sign_send_instructions(
             ixs,
             vec![
+                authority,
                 &market_account,
                 &event_queue_account,
                 &bids_account,
@@ -146,8 +161,9 @@ pub async fn create_orderbook_with_params(
     asks_size: u64,
     min_base_order_size: u64,
     cranker_reward: u64,
+    market_product_group: Pubkey,
+    authority: &KeypairD,
 ) -> std::result::Result<(Pubkey, Pubkey, Pubkey, Pubkey), SDKError> {
-    // Create market state account
     let market_account = KeypairD::new();
     let event_queue_account = KeypairD::new();
     let bids_account = KeypairD::new();
@@ -165,11 +181,14 @@ pub async fn create_orderbook_with_params(
         asks_size,
         min_base_order_size,
         cranker_reward,
+        market_product_group,
+        authority.pubkey(),
     );
     client
         .sign_send_instructions(
             ixs,
             vec![
+                authority,
                 &market_account,
                 &event_queue_account,
                 &bids_account,
